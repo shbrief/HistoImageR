@@ -31,6 +31,7 @@ library(rjson)
 library(curatedTCGAData)
 library(TCGAutils)
 library(dplyr)
+library(HistoImageR)
 ```
 
 ## Get data
@@ -41,29 +42,8 @@ wget -r -np -nH -R index.html https://u24-cancer-genomics.seandavi.workers.dev/p
 ```
 
 ```{r}
-#' @param pg A data frame. Prov-GigaPath output with the dimension 1x15.
-#' @param layer The layer of embedding. Available 0 to 13. If it is set to 
-#' `NULL`, all the layers will be returned as 'samples x feature_dimensions'
-#' matrix.
-#' 
-getEmbedding <- function(pg, layer = NULL) {
-  
-  ## extract the target layer
-  layer_ind <- layer + 1
-  tensor_string <- pg[[1, layer_ind]] 
-
-  ## Remove the tensor wrapper and brackets
-  clean_string <- gsub("tensor\\(\\[\\[|\\]\\]\\)", "", tensor_string)
-
-  ## Split by comma and convert to numeric
-  values <- as.numeric(unlist(strsplit(clean_string, ",\\s*")))
-  return(values)
-}
-```
-
-```{r}
 ## Initiate the matrix
-dir <- "~/Projects/imageTCGAAnalyses/data/embeddings/tcga_ov"
+dir <- "~/Packages/HistoImageR/data/embeddings/tcga_ov"
 fnames <- list.files(dir) %>% grep(".csv", ., value = TRUE) # all Prov-GigaPath outputs
 tensor_matrix <- matrix(nrow = length(fnames), ncol = 768)
 
