@@ -1,0 +1,379 @@
+---
+title: "MOFA2 analyses with H&E image features"
+author: "Sehyun Oh, Eslam Abousamra"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+format:
+  html:
+    theme: yeti
+    highlight-style: tango
+    toc: true
+    toc-depth: 3
+    toc-floating: true
+abstract: "TCGA-COAD multi-modal"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(comment = "#>", 
+                      collapse = TRUE, 
+                      message = FALSE, 
+                      warning = FALSE)
+```
+
+# Setup
+## Load libraries
+```{r include=FALSE,results="hide",message=FALSE,warning=FALSE}
+library(MOFA2)
+library(SpatialExperiment)
+library(MultiAssayExperiment)
+library(dplyr)
+library(HistoImageR)
+library(ggplot2)
+library(TCGAutils)
+library(curatedTCGAData)
+```
+
+## Get data
+```{bash eval=FALSE}
+## All TCGA-COAD Prov-GigaPath outputs
+wget -r -np -nH -R index.html https://u24-cancer-genomics.seandavi.workers.dev/provgigapath/TCGA_COAD/
+
+## All TCGA-READ Prov-GigaPath outputs
+wget -r -np -nH -R index.html https://u24-cancer-genomics.seandavi.workers.dev/provgigapath/TCGA_READ/
+```
+
+# Load data 
+## Load embeddings
+```{r}
+dataDir <- "~/Packages/HistoImageR/data/provgigapath"
+coad_dir <- file.path(dataDir, "TCGA_COAD")
+coad_fnames <- list.files(coad_dir) %>% 
+    grep(".csv", ., value = TRUE) %>%
+    file.path(coad_dir, .)
+
+# read_dir <- file.path(dataDir, "TCGA_READ")
+# read_fnames <- list.files(read_dir) %>% 
+#     grep(".csv", ., value = TRUE) %>%
+#     file.path(read_dir, .)
+# 
+# fnames <- c(coad_fnames, read_fnames)
+fnames <- coad_fnames
+```
+
+```{r embedding_layer0}
+tensor_matrix <- matrix(nrow = length(fnames), ncol = 768)
+
+## Simplify the slide id to participant id
+participant_ids <- gsub(".csv", "", fnames) %>% 
+    strsplit(., "-") %>% 
+    sapply(., function(x) paste(x[1:3], collapse = "-"))
+rownames(tensor_matrix) <- participant_ids
+
+## Construct embedding (layer-0) matrix
+for (i in seq_along(fnames)) {
+  x <- readr::read_csv(fnames[i]) # load a file
+  
+  if (dim(x)[1] != 0) {
+    res <- importEmbedding(x, layer = 0)
+  } else {
+    res <- NA
+  }
+  
+  tensor_matrix[i,] <- res
+}
+```
+
+```{r embedding_layer1, eval=FALSE}
+tensor_matrix_layer1 <- matrix(nrow = length(fnames), ncol = 768)
+
+## Simplify the slide id to participant id
+participant_ids <- gsub(".csv", "", fnames) %>% 
+    strsplit(., "-") %>% 
+    sapply(., function(x) paste(x[1:3], collapse = "-"))
+rownames(tensor_matrix_layer1) <- participant_ids
+
+## Construct embedding (layer-0) matrix
+for (i in seq_along(fnames)) {
+  x <- readr::read_csv(fnames[i]) # load a file
+  
+  if (dim(x)[1] != 0) {
+    res <- importEmbedding(x, layer = 1)
+  } else {
+    res <- NA
+  }
+  
+  tensor_matrix_layer1[i,] <- res
+}
+```
+
+```{r echo=FALSE, eval=FALSE}
+## Slides without Prov-GigaPath results
+no_res <- tensor_matrix[!complete.cases(tensor_matrix), ] %>% rownames
+no_res
+```
+
+We have `nrow(tensor_matrix)` embeddings from TCGA_COAD and TCGA_READ.
+```{r embedding_matrix}
+tensor_matrix_full <- na.omit(tensor_matrix)
+```
+
+
+# Combine multiple modalities
+MOFA2 doesn't directly support RaggedExperiment objects as one of the experiment 
+types within a MultiAssayExperiment. The `create_mofa_from_MultiAssayExperiment()`
+function specifically looks for experiments that can be converted to matrices 
+using the `assay()` function; i.e., objects that have a standard `assay()` method 
+returning a matrix. This includes SummarizedExperiment, SingleCellExperiment,
+and RangedSummarizedExperiment objects. 
+
+```{r}
+#------------------------------------------
+# 1. Load COAD + READ RNASeq assays
+#------------------------------------------
+# # Load COAD
+# coad_mae <- curatedTCGAData(
+#   diseaseCode = "COAD",
+#   assays = "RNASeq2GeneNorm",
+#   version = "2.1.1",
+#   dry.run = FALSE
+# )
+# 
+# # Load READ
+# read_mae <- curatedTCGAData(
+#   diseaseCode = "READ",
+#   assays = "RNASeq2GeneNorm",
+#   version = "2.1.1",
+#   dry.run = FALSE
+# )
+# 
+# rna_coad <- coad_mae[["COAD_RNASeq2GeneNorm-20160128"]]
+# rna_read <- read_mae[["READ_RNASeq2GeneNorm-20160128"]]
+
+coad_mae_all <- curatedTCGAData(
+  diseaseCode = "COAD",
+  assays = "*",
+  version = "2.1.1",
+  dry.run = FALSE
+)
+
+assays_subset <- c(
+    "COAD_GISTIC_AllByGene-20160128", # CNA
+    "COAD_RNASeq2GeneNorm-20160128", # RNAseq
+    "COAD_Methylation_methyl450-20160128") # Methylation
+coad_mae <- coad_mae_all[,,which(names(coad_mae_all) %in% assays_subset)]
+
+#------------------------------------------
+# 2. Ensure consistent genes
+#------------------------------------------
+# common_genes <- intersect(rownames(rna_coad), rownames(rna_read))
+# rna_coad_bulk <- rna_coad[common_genes, ]
+# rna_read_bulk <- rna_read[common_genes, ]
+# 
+# # Merge RNASeq matrices
+# rna_combined <- cbind(rna_coad_bulk, rna_read_bulk)
+
+# Standardize patient IDs (first 3 TCGA fields)
+updated_coad_mae <- vector(mode = "list", length = length(coad_mae))
+names(updated_coad_mae) <- names(coad_mae)
+for (i in seq_along(coad_mae)) {
+    mae <- coad_mae[[i]]
+    patients <- sapply(strsplit(colnames(mae), "-"), function(x) paste(x[1:3], collapse = "-"))
+    colnames(mae) <- make.unique(patients)
+    updated_coad_mae[[i]] <- mae
+}
+
+
+#------------------------------------------
+# 3. Prepare embedding matrix
+#------------------------------------------
+## Layer 0
+tensor_matrix_unique <- tensor_matrix_full[!duplicated(rownames(tensor_matrix_full)), ] # keep only one slide per patient
+embedding_patients <- sapply(strsplit(rownames(tensor_matrix_unique), "-"), function(x) paste(x[1:3], collapse = "-"))
+rownames(tensor_matrix_unique) <- make.unique(embedding_patients) %>% basename
+
+## Layer 1
+tensor_matrix_unique1 <- tensor_matrix_layer1[!duplicated(rownames(tensor_matrix_layer1)), ] # keep only one slide per patient
+embedding_patients <- sapply(strsplit(rownames(tensor_matrix_unique1), "-"), function(x) paste(x[1:3], collapse = "-"))
+rownames(tensor_matrix_unique1) <- make.unique(embedding_patients) %>% basename
+```
+
+Subset to clinical metadata attributes with >95% completeness and remove technical fields
+```{r}
+#------------------------------------------
+# 4. Prepare clinical metadata
+#------------------------------------------
+# Subset COAD clinical metadata
+coad_clinical <- colData(coad_mae)
+completeness <- colSums(!is.na(coad_clinical)) / nrow(coad_clinical) * 100
+clinical_sub <- coad_clinical[, which(completeness > 95)] %>%
+    as.data.frame() %>%
+    select(-matches("aliquot"), 
+           -matches("portion"))
+
+# # Subset READ clinical metadata
+# read_clinical <- colData(read_mae)
+# completeness <- colSums(!is.na(read_clinical)) / nrow(read_clinical) * 100
+# read_clinical_sub <- read_clinical[, which(completeness > 95)] %>%
+#     as.data.frame() %>%
+#     select(-matches("aliquot"), 
+#            -matches("portion"))
+
+# # Ensure all columns exist in both datasets
+# all_cols <- union(colnames(coad_clinical_sub), colnames(read_clinical_sub))
+
+# # Fill missing columns with NA
+# coad_clinical_full <- coad_clinical_sub
+# for (col in setdiff(all_cols, colnames(coad_clinical_sub))) coad_clinical_full[[col]] <- NA
+# 
+# read_clinical_full <- read_clinical_sub
+# for (col in setdiff(all_cols, colnames(read_clinical_sub))) read_clinical_full[[col]] <- NA
+# 
+# # Merge COAD + READ clinical metadata
+# clinical_sub <- rbind(coad_clinical_full, read_clinical_full)
+# 
+# # Keep only patients with embeddings
+# patients_with_embed <- rownames(tensor_matrix_unique) %>% basename(.)
+# clinical_sub <- clinical_sub[rownames(clinical_sub) %in% patients_with_embed, ]
+
+# Factorize categorical variables with 2–10 levels
+numLv <- apply(clinical_sub, 2, function(x) length(unique(x)))
+slideAttrNames <- names(numLv[numLv >= 2 & numLv <= 10])
+for (slideAttrName in slideAttrNames) {
+  clinical_sub[[slideAttrName]] <- as.factor(clinical_sub[[slideAttrName]])
+}
+
+metadata_df <- clinical_sub[slideAttrNames]
+
+# #------------------------------------------
+# # 5. Subset RNASeq to patients with embeddings
+# #------------------------------------------
+# rna_matched <- coad_mae[, colnames(coad_mae) %in% patients_with_embed, drop = FALSE]
+# 
+# # Remove genes with Inf/-Inf
+# rna_matrix <- assay(rna_matched)
+# rna_keep <- apply(rna_matrix, 1, function(x) all(is.finite(x)))
+# rna_matched_clean <- rna_matched[rna_keep, ]
+# 
+# # Subset embedding to match RNA columns
+# embedding_matched_clean <- tensor_matrix_unique[colnames(rna_matched_clean), , drop = FALSE]
+
+#------------------------------------------
+# 6. Build SummarizedExperiment objects
+#------------------------------------------
+# rna_se <- SummarizedExperiment(
+#   assays = list(counts = assay(rna_matched_clean)),
+#   colData = DataFrame(patientID = colnames(rna_matched_clean))
+# )
+
+patients_with_image <- intersect(rownames(metadata_df), rownames(tensor_matrix_unique))
+embedding_se_coldata <- metadata_df[patients_with_image,]
+
+## layer0
+embedding_se_subset <- tensor_matrix_unique[patients_with_image,]
+embedding_se <- SummarizedExperiment(
+  assays = list(embedding = t(embedding_se_subset)),
+  colData = embedding_se_coldata
+)
+rownames(embedding_se) <- paste0("dim_", seq_len(nrow(embedding_se)))
+
+# ## layer1
+# embedding1_se_subset <- tensor_matrix_unique1[patients_with_image,]
+# embedding1_se <- SummarizedExperiment(
+#   assays = list(embedding = t(embedding1_se_subset)),
+#   colData = embedding_se_coldata
+# )
+# rownames(embedding1_se) <- paste0("dim_", seq_len(nrow(embedding1_se)))
+
+
+#------------------------------------------
+# 7. Build MultiAssayExperiment
+#------------------------------------------
+cna_formatted <- updated_coad_mae[[1]]
+rownames(cna_formatted) <- rowData(cna_formatted)[[1]]
+
+crc_mae <- MultiAssayExperiment(
+    experiments = list(
+        # CNA = cna_formatted,
+        RNAseq = updated_coad_mae[[2]],
+        Methylation = updated_coad_mae[[3]],
+        Embedding_layer0 = embedding_se
+    ),
+    colData = metadata_df
+)
+```
+
+
+# MOFA2 analysis
+## Create MOFA object
+```{r}
+# Create MOFA object
+mofa_object <- create_mofa_from_MultiAssayExperiment(crc_mae)
+
+# Define model options
+model_opts <- get_default_model_options(mofa_object)
+model_opts$num_factors <- 15
+
+# Define training options
+train_opts <- get_default_training_options(mofa_object)
+train_opts$convergence_mode <- "slow"
+train_opts$seed <- 42
+
+# Prepare and run MOFA
+mofa_object <- prepare_mofa(
+  object = mofa_object,
+  model_options = model_opts,
+  training_options = train_opts
+)
+```
+
+## Run MOFA
++ `mofa_model_crc_ver0.hdf5`
+    - RNAseq
+    - Embedding_layer0
++ `mofa_model_crc_ver1.hdf5`
+    - RNAseq
+    - Methylation
+    - Embedding_layer0
+    - Embedding_layer1
++ `mofa_model_crc_ver2.hdf5`
+    - CNA: COAD_GISTIC_AllByGene-2016012
+    - RNAseq: COAD_RNASeq2GeneNorm-20160128
+    - Methylation: COAD_Methylation_methyl450-20160128
+    - Embedding_layer0
++ `mofa_model_crc_ver3.hdf5`
+    - CNA: COAD_GISTIC_AllByGene-2016012
+    - RNAseq: COAD_RNASeq2GeneNorm-20160128
+    - Embedding_layer0
+    
++ `mofa_model_crc_ver4.hdf5`
+    - RNAseq
+    - Methylation
+    - Embedding_layer0
+
+```{r train-mofa-model}
+mofa_object.trained <- run_mofa(
+    mofa_object,
+    outfile = "mofa_model_crc_ver4.hdf5",
+    use_basilisk = TRUE
+)
+```
+
+## Analyze MOFA model
+```{r}
+ver <- 4
+    
+# Load trained MOFA model
+mofa_object.trained <- load_model(paste0("mofa_model_crc_ver", ver,".hdf5"))
+
+# Keep only patients in MOFA object
+mofa_samples <- unlist(samples_names(mofa_object.trained))
+metadata_matched <- metadata_df[mofa_samples, , drop = FALSE]
+
+# For the metadata data frame that we want to add to the MOFA object:
+metadata_df$sample <- rownames(metadata_df)
+
+# Now, when we set the samples_metadata, it will have the required 'sample' column.
+samples_metadata(mofa_object.trained) <- metadata_df
+
+# Save model with metadata
+saveRDS(mofa_object.trained, paste0("mofa_model_crc_ver", ver,".rds"))
+```
