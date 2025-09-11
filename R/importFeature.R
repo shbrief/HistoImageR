@@ -12,7 +12,7 @@
 #' @return An ExperimentList object containing SpatialExperiment objects (one per slide/sample)
 #' 
 #' @export
-importImgFeatures <- function(fnames, subsample_rate = 10, seed = NULL) {
+importFeature <- function(fnames, subsample_rate = 10, seed = NULL) {
   
     patientIDs <- regmatches(basename(fnames), regexpr("TCGA-[0-9A-Z]{2}-[0-9A-Z]{4}", basename(fnames)))
     

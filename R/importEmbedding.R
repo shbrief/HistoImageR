@@ -8,7 +8,7 @@
 #' @return A data frame (1 x 768) of a chosen embedding layer
 #' 
 #' @export
-getEmbedding <- function(pg, layer = NULL) {
+importEmbedding <- function(pg, layer = NULL) {
     
     ## extract the target layer
     layer_ind <- layer + 1
