@@ -1,0 +1,287 @@
+---
+title: "MOFA2 analyses with H&E image features"
+author: "Sehyun Oh"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+format:
+  html:
+    theme: yeti
+    highlight-style: tango
+    toc: true
+    toc-depth: 3
+    toc-floating: true
+abstract: "Visualize MOFA models from TCGA-COAD multi-modal analysis"
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(comment = "#>", 
+                      collapse = TRUE, 
+                      message = FALSE, 
+                      warning = FALSE)
+```
+
+
+# Setup
+## Load libraries
+```{r include=TRUE,results="hide",message=FALSE,warning=FALSE}
+library(MOFA2)
+library(ggplot2)
+library(dplyr)
+```
+
+
+# MOFA Visualizations
+```{r}
+ver <- 5
+mofa_object.trained <- readRDS(paste0("MOFA_models/mofa_model_crc_ver", ver,".rds"))
+```
+
+```{r echo=FALSE, eval=FALSE}
+ver <- 2
+mofa_object.trained <- readRDS(paste0("MOFA_models/mofa_model_read_ver", ver,".rds"))
+```
+
+```{r reformat, echo=FALSE}
+## Update long view names
+rename_map <- data.frame(
+    col1 = c("Methylation", 
+             "Embedding_layer0"),
+    col2 = c("DNAm", 
+             "Embedding")
+)
+
+viewsNames <- views_names(mofa_object.trained)
+views_names(mofa_object.trained) <- plyr::mapvalues(
+    x = viewsNames, 
+    from = rename_map$col1, 
+    to = rename_map$col2, 
+    warn_missing = FALSE)
+
+## Update long column names
+long_names_df <- data.frame(
+    col1 = c("patient.microsatellite_instability_test_results.microsatellite_instability_test_result.mononucleotide_and_dinucleotide_marker_panel_analysis_status",
+             "patient.samples.sample.2.sample_type",
+             "patient.biospecimen_cqcf.top_slide_submitted",
+             "gender.x",
+             "vital_status.x",
+             "histological_type.x",
+             "patient.clinical_cqcf.frozen_specimen_anatomic_site"),
+    col2 = c("MSI",
+             "sample_type", 
+             "top_slide",
+             "gender",
+             "vital_status",
+             "histological_type",
+             "specimen_site")
+)
+
+meta <- samples_metadata(mofa_object.trained)
+colNames <- colnames(meta)
+colnames(meta) <- plyr::mapvalues(
+    x = colNames, 
+    from = long_names_df$col1, 
+    to = long_names_df$col2, 
+    warn_missing = FALSE)
+samples_metadata(mofa_object.trained) <- meta
+```
+
+
+```{r warning=FALSE, fig.width=4, fig.height=4, collapse = FALSE}
+# Visualize the model
+plot_data_overview(mofa_object.trained)
+
+# Plot factor correlations
+plot_factor_cor(mofa_object.trained)
+```
+
+```{r warning=FALSE, fig.width=4, fig.height=4, collapse = FALSE}
+# Plot variance explained
+plot_variance_explained(mofa_object.trained, plot_total = TRUE)
+```
+
+Choose the MOFA Factor number to check
+```{r}
+factor_num <- 1
+```
+
+```{r}
+kw_res <- HistoImageR:::testFactorAssociations(mofa_object.trained, factor_num)
+top_attrs <- kw_res %>% 
+    filter(p_adjusted < 0.5) %>% 
+    arrange(desc(statistic)) %>% 
+    head
+top_attrs
+```
+
+```{r warning=FALSE, fig.width=3.5, fig.height=4, collapse = FALSE}
+# Plot factor colored by clinical data
+clinical_attrs <- top_attrs$group
+
+for (clinical_attr in clinical_attrs) {
+    plt <- plot_factor(mofa_object.trained, 
+            factor = factor_num, 
+            add_violin = TRUE,
+            color_by = clinical_attr,
+            # legend = FALSE,
+            dodge = TRUE)
+    print(plt)
+}
+```
+
+```{r warning=FALSE, fig.width=5, fig.height=4, collapse = FALSE, eval=FALSE, echo=FALSE}
+# Plot factor scatter
+plot_factor(mofa_object.trained, 
+            factor = factor_num, 
+            add_violin = TRUE,
+            color_by = "patient.clinical_cqcf.frozen_specimen_anatomic_site",
+            dodge = TRUE)
+
+# # Plot factor colored by MYH11 gene
+# plot_factor(mofa_object.trained, 
+#             factor = 1, 
+#             add_violin = TRUE,
+#             dodge = TRUE,
+#             color_by = "MYH11")
+```
+
+```{r warning=FALSE, fig.width=6, fig.height=4, collapse = FALSE}
+## Plot data heatmaps
+plot_data_heatmap(mofa_object.trained,
+                  factor = factor_num,
+                  view = "Embedding",
+                  features = 100,
+                  annotation_samples = c("sample_type"),
+                  cluster_rows = TRUE,
+                  cluster_cols = TRUE, 
+                  show_colnames = FALSE,
+                  show_rownames = FALSE)
+
+samples_to_keep <- meta %>% filter(sample_type != "blood derived normal") %>% rownames(.)
+trained_mofa_subset <- subset_samples(mofa_object.trained, samples = samples_to_keep)
+plot_data_heatmap(trained_mofa_subset,
+                  factor = factor_num,
+                  view = "Embedding",
+                  features = 100,
+                  annotation_samples = c("sample_type", "top_slide", "pathology_N_stage"),
+                  cluster_rows = TRUE,
+                  cluster_cols = TRUE, 
+                  show_colnames = FALSE,
+                  show_rownames = FALSE)
+
+# plot_data_heatmap(mofa_object.trained,
+#                   factor = factor_num,
+#                   view = "Embedding",
+#                   features = 10,
+#                   cluster_rows = TRUE,
+#                   cluster_cols = FALSE,
+#                   show_colnames = FALSE)
+```
+
+```{r warning=FALSE, fig.width=4, fig.height=4, collapse = FALSE, echo=FALSE, eval=FALSE}
+## Plot top weights
+plot_top_weights(mofa_object.trained,
+                 view = "RNAseq",
+                 factor = factor_num,
+                 nfeatures = 10)
+
+plot_top_weights(mofa_object.trained,
+                 view = "Embedding", 
+                 factor = factor_num,
+                 nfeatures = 10)
+```
+
+A larger absolute feature weight indicates a stronger association of the 
+feature with the factor. A sign interprets the effect direction: positive — the 
+feature demonstrates larger values in the samples with positive factor values, etc.
+
+```{r eval=FALSE}
+## Need to debug
+# Error in .check_and_get_views(object, view) : 
+#   all(views %in% views_names(object)) is not TRUE
+plot_weights(mofa_object.trained,
+             view = "RNAseq",
+             factor = factor_num,
+             nfeatures = 5,
+             scale = TRUE)
+```
+
+```{r eval=FALSE, echo=FALSE}
+# Get top features for the selected Factor 
+top_features <- get_weights(
+    mofa_object.trained,
+    factor = factor_num,
+    view = "Protein", 
+    abs = TRUE)
+top_features_list <- top_genes[[1]][,1] %>% 
+    sort(., decreasing = TRUE) %>% 
+    names %>% .[1:10]
+top_features_list
+```
+
+```{r enrichGO, echo=FALSE, eval=FALSE}
+# Get top features for the selected Factor 
+top_genes <- get_weights(
+    mofa_object.trained,
+    factor = factor_num,
+    view = "RNAseq", 
+    abs = TRUE)
+
+top_genes_list <- top_genes[[1]][,1] %>% 
+    sort(., decreasing = TRUE) %>% 
+    names %>% .[1:100]
+
+# Perform pathway enrichment
+pathway_results <- clusterProfiler::enrichGO(top_genes_list, "org.Hs.eg.db")
+```
+
+```{r GSEA, echo=FALSE, eval=FALSE}
+top_genes <- get_weights(
+    mofa_object.trained,
+    factor = factor_num,
+    view = "RNAseq", 
+    abs = FALSE)
+
+top_genes_list <- top_genes[[1]][,1] %>% 
+    sort(., decreasing = TRUE)
+
+
+term2gene <- clusterProfiler::read.gmt("~/Packages/HistoImageR/inst/extdata/c2.cp.v7.1.symbols.gmt")
+colnames(term2gene) <- c("gs_name", "entrez_gene")
+
+gsea_result <- clusterProfiler::GSEA(
+    top_genes_list, 
+    TERM2GENE = term2gene,
+    pvalueCutoff = 0.05, 
+    seed = TRUE)
+
+dotplot(gsea_result, 
+        showCategory = 10,
+        split = ".sign") + 
+  facet_grid(.~.sign) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 5))
+
+enrichplot::gseaplot2(gsea_result, 
+          geneSetID = c(1, 2, 3),
+          pvalue_table = TRUE,
+          color = c("red", "blue", "green"),
+          ES_geom = "line",
+          subplots = 1:3)
+```
+
+Association analysis between the sample metadata and the Factor values
+```{r}
+# Factor association analysis
+correlate_factors_with_covariates(mofa_object.trained, 
+                                  covariates = c(
+                                      # "gender","vital_status",
+                                                 # "MSI",
+                                                 "top_slide",
+                                                 "histological_type",
+                                                 # "pathology_T_stage", "pathology_N_stage", "pathology_M_stage",
+                                                 "sample_type", "specimen_site"),
+                                  # covariates = colnames(samples_metadata(mofa_object.trained)),
+                                  plot = "r",
+                                  factors = 1:10,
+                                  cluster_cols = FALSE)
+```
+
