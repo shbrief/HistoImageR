@@ -24,7 +24,7 @@ knitr::opts_chunk$set(comment = "#>",
 
 ## Load libraries
 
-```{r}
+```{r include=TRUE,results="hide",message=FALSE,warning=FALSE}
 library(arrow)
 library(torch)
 library(rjson)
@@ -32,6 +32,7 @@ library(curatedTCGAData)
 library(TCGAutils)
 library(dplyr)
 library(HistoImageR)
+library(ggplot2)
 ```
 
 ## Get data
@@ -43,7 +44,7 @@ wget -r -np -nH -R index.html https://u24-cancer-genomics.seandavi.workers.dev/p
 
 ```{r}
 ## Initiate the matrix
-dir <- "~/Packages/HistoImageR/data/embeddings/tcga_ov"
+dir <- "~/Packages/HistoImageR/data/provgigapath/TCGA_OV"
 fnames <- list.files(dir) %>% grep(".csv", ., value = TRUE) # all Prov-GigaPath outputs
 tensor_matrix <- matrix(nrow = length(fnames), ncol = 768)
 
@@ -148,6 +149,7 @@ metadata_df <- all[slideAttrNames]
 ```
 
 ```{r}
+source("~/Packages/HistoImageR/R/embeddingViz.R")
 res <- analyze_embedding_separation(embedding_matrix, metadata_df)
 res$plots
 ```

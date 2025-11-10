@@ -158,7 +158,8 @@ coad_mae_all <- curatedTCGAData(
 assays_subset <- c(
     "COAD_GISTIC_AllByGene-20160128", # CNA
     "COAD_RNASeq2GeneNorm-20160128", # RNAseq
-    "COAD_Methylation_methyl450-20160128") # Methylation
+    "COAD_Methylation_methyl450-20160128", # Methylation
+    "COAD_RPPAArray-20160128") # Proteomics
 coad_mae <- coad_mae_all[,,which(names(coad_mae_all) %in% assays_subset)]
 
 #------------------------------------------
@@ -190,10 +191,10 @@ tensor_matrix_unique <- tensor_matrix_full[!duplicated(rownames(tensor_matrix_fu
 embedding_patients <- sapply(strsplit(rownames(tensor_matrix_unique), "-"), function(x) paste(x[1:3], collapse = "-"))
 rownames(tensor_matrix_unique) <- make.unique(embedding_patients) %>% basename
 
-## Layer 1
-tensor_matrix_unique1 <- tensor_matrix_layer1[!duplicated(rownames(tensor_matrix_layer1)), ] # keep only one slide per patient
-embedding_patients <- sapply(strsplit(rownames(tensor_matrix_unique1), "-"), function(x) paste(x[1:3], collapse = "-"))
-rownames(tensor_matrix_unique1) <- make.unique(embedding_patients) %>% basename
+# ## Layer 1
+# tensor_matrix_unique1 <- tensor_matrix_layer1[!duplicated(rownames(tensor_matrix_layer1)), ] # keep only one slide per patient
+# embedding_patients <- sapply(strsplit(rownames(tensor_matrix_unique1), "-"), function(x) paste(x[1:3], collapse = "-"))
+# rownames(tensor_matrix_unique1) <- make.unique(embedding_patients) %>% basename
 ```
 
 Subset to clinical metadata attributes with >95% completeness and remove technical fields
@@ -287,14 +288,15 @@ rownames(embedding_se) <- paste0("dim_", seq_len(nrow(embedding_se)))
 #------------------------------------------
 # 7. Build MultiAssayExperiment
 #------------------------------------------
-cna_formatted <- updated_coad_mae[[1]]
-rownames(cna_formatted) <- rowData(cna_formatted)[[1]]
+cna_formatted <- updated_coad_mae[["COAD_GISTIC_AllByGene-20160128"]]
+rownames(cna_formatted) <- rowData(cna_formatted)[["COAD_GISTIC_AllByGene-20160128"]]
 
 crc_mae <- MultiAssayExperiment(
     experiments = list(
         # CNA = cna_formatted,
-        RNAseq = updated_coad_mae[[2]],
-        Methylation = updated_coad_mae[[3]],
+        # RNAseq = updated_coad_mae[["COAD_RNASeq2GeneNorm-20160128"]],
+        # Methylation = updated_coad_mae[["COAD_Methylation_methyl450-20160128"]],
+        Protein = updated_coad_mae[["COAD_RPPAArray-20160128"]],
         Embedding_layer0 = embedding_se
     ),
     colData = metadata_df
@@ -343,36 +345,64 @@ mofa_object <- prepare_mofa(
     - CNA: COAD_GISTIC_AllByGene-2016012
     - RNAseq: COAD_RNASeq2GeneNorm-20160128
     - Embedding_layer0
-    
 + `mofa_model_crc_ver4.hdf5`
     - RNAseq
     - Methylation
     - Embedding_layer0
++ `mofa_model_crc_ver5.hdf5`
+    - RPPA
+    - Embedding_layer0
++ `mofa_model_crc_ver6.hdf5`
+    - RNAseq
+    - RPPA
+    - Embedding_layer0
++ `mofa_model_crc_ver7.hdf5`
+    - RNAseq
++ `mofa_model_crc_ver8.hdf5`
+    - RNAseq
+    - RPPA
+    
+    
++ `mofa_model_read_ver1.hdf5`
+    - RPPA
+    - Embedding_layer0
++ `mofa_model_read_ver2.hdf5`
+    - RNAseq
+    - Embedding_layer0
++ `mofa_model_read_ver3.hdf5`
+    - RNAseq
+    - RPPA
+    - Embedding_layer0
+
 
 ```{r train-mofa-model}
+ver <- 5
+model_name <- paste0("mofa_model_crc_ver", ver,".hdf5")
+
+## Run MOFA
 mofa_object.trained <- run_mofa(
     mofa_object,
-    outfile = "mofa_model_crc_ver4.hdf5",
+    outfile = model_name,
     use_basilisk = TRUE
 )
 ```
 
 ## Analyze MOFA model
 ```{r}
-ver <- 4
-    
 # Load trained MOFA model
-mofa_object.trained <- load_model(paste0("mofa_model_crc_ver", ver,".hdf5"))
+mofa_object.trained <- load_model(model_name)
 
-# Keep only patients in MOFA object
-mofa_samples <- unlist(samples_names(mofa_object.trained))
-metadata_matched <- metadata_df[mofa_samples, , drop = FALSE]
+# # Keep only patients in MOFA object
+# mofa_samples <- unlist(samples_names(mofa_object.trained))
+# metadata_matched <- metadata_df[mofa_samples, , drop = FALSE]
 
 # For the metadata data frame that we want to add to the MOFA object:
 metadata_df$sample <- rownames(metadata_df)
 
 # Now, when we set the samples_metadata, it will have the required 'sample' column.
-samples_metadata(mofa_object.trained) <- metadata_df
+common_samples <- intersect(samples_metadata(mofa_object.trained)$sample,
+                            metadata_df$sample)
+samples_metadata(mofa_object.trained) <- metadata_df %>% filter(sample %in% common_samples)
 
 # Save model with metadata
 saveRDS(mofa_object.trained, paste0("mofa_model_crc_ver", ver,".rds"))
